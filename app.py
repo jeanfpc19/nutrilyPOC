@@ -1,53 +1,77 @@
 import streamlit as st
 import google.generativeai as genai
 
-# 1. Configuration
-# API Key handling (best practice is using st.secrets for deployment)
-# genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+# 1. Configuración de la API
+# Streamlit Cloud leerá la llave desde los "Secrets" en el panel de control
+if "GOOGLE_API_KEY" in st.secrets:
+    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+else:
+    st.error("Falta la GOOGLE_API_KEY en la configuración de Secrets.")
 
-st.title("Nutritionist AI Companion")
+st.title("Asistente de Nutrición con IA")
 
-# Initialize Session State to store the diet plan across the session
-if "diet_plan" not in st.session_state:
-    st.session_state["diet_plan"] = ""
+# Inicializar el estado de la sesión para guardar el plan de dieta
+if "plan_dieta" not in st.session_state:
+    st.session_state["plan_dieta"] = ""
 
-# 2. Sidebar for Navigation
-role = st.sidebar.radio("Select User Type:", ["Nutritionist", "Patient"])
+# 2. Barra lateral para navegación
+rol = st.sidebar.radio("Selecciona tu rol:", ["Nutricionista", "Paciente"])
 
-# --- NUTRITIONIST VIEW ---
-if role == "Nutritionist":
-    st.header("Upload Patient Plan")
-    diet_input = st.text_area("Paste diet plan, restrictions, and macros here:")
+# --- VISTA DEL NUTRICIONISTA ---
+if rol == "Nutricionista":
+    st.header("Cargar Plan del Paciente")
+    entrada_dieta = st.text_area("Pega el plan de alimentación, restricciones y macros aquí:")
     
-    if st.button("Save Plan"):
-        st.session_state["diet_plan"] = diet_input
-        st.success("Plan loaded successfully! Switch to 'Patient' view to test.")
+    if st.button("Guardar Plan"):
+        st.session_state["plan_dieta"] = entrada_dieta
+        st.success("¡Plan cargado exitosamente! Cambia a la vista de 'Paciente' para probar.")
 
-# --- PATIENT VIEW ---
-elif role == "Patient":
-    st.header("Chat with your Assistant")
+# --- VISTA DEL PACIENTE ---
+elif rol == "Paciente":
+    st.header("Chatea con tu Asistente")
     
-    # Check if a plan exists
-    if not st.session_state["diet_plan"]:
-        st.warning("No diet plan found. Please have the nutritionist load the data first.")
+    # Verificar si existe un plan
+    if not st.session_state["plan_dieta"]:
+        st.warning("No se encontró ningún plan de alimentación. El nutricionista debe cargar los datos primero.")
     else:
-        user_question = st.text_input("Ask about your diet:")
+        pregunta_usuario = st.text_input("Haz una pregunta sobre tu dieta:")
         
-        if user_question:
-            # 3. The RAG Logic (Simple Prompt Stuffing)
+        if pregunta_usuario:
+            # 3. La lógica RAG en Español
             prompt = f"""
-            You are a strict nutritionist assistant. 
-            Here is the patient's specific profile and restrictions:
-            {st.session_state['diet_plan']}
+            Eres un asistente de nutrición estricto y útil.
+            Aquí está el perfil específico y las restricciones del paciente:
+            {st.session_state['plan_dieta']}
             
-            Patient Question: {user_question}
+            Pregunta del Paciente: {pregunta_usuario}
             
-            Answer the question strictly based on the profile above. 
-            If the food is not allowed or contradicts the macros, say no.
+            Responde la pregunta en español, de forma clara y estrictamente basada en el perfil anterior. 
+            Si el alimento no está permitido o contradice el plan, di que no.
             """
             
-            # Call the LLM (Gemini)
-            model = genai.GenerativeModel('gemini-pro')
-            response = model.generate_content(prompt)
+            # 4. Secuencia de Failover (Cascada de Modelos)
+            modelos_disponibles = ['gemini-3-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
+            respuesta_generada = None
             
-            st.write(response.text)
+            with st.spinner("Consultando al asistente..."):
+                for nombre_modelo in modelos_disponibles:
+                    try:
+                        modelo = genai.GenerativeModel(nombre_modelo)
+                        respuesta = modelo.generate_content(prompt)
+                        respuesta_generada = respuesta.text
+                        
+                        # Opcional: Mostrar qué modelo respondió para propósitos de depuración en el PoC
+                        st.caption(f"*(Respondido usando: {nombre_modelo})*")
+                        break # Si tiene éxito, rompemos el bucle y dejamos de intentar
+                        
+                    except Exception as e:
+                        # Si el error es por límite de cuota (ResourceExhausted) o cualquier otro fallo,
+                        # el bucle continúa con el siguiente modelo en la lista.
+                        print(f"Fallo con {nombre_modelo}: {e}")
+                        continue
+            
+            # 5. Mostrar el resultado
+            if respuesta_generada:
+                st.write(respuesta_generada)
+            else:
+                st.error("Todos los modelos están actualmente saturados por los límites de la capa gratuita. Por favor, espera un minuto e intenta de nuevo.")
